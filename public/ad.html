@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta name="monetag" content="826f3d71077a9456aa1e36ec9f254276">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ad Dekho Aur Kamao 💰</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;text-align:center;background:#0f1220;color:#f1f5f9;margin:0;padding:20px}
+    h1{color:#34d399;margin-bottom:8px}
+    p.desc{color:#cbd5e1;margin-top:0}
+    .iframe-wrap{width:100%;max-width:760px;margin:14px auto;border-radius:10px;overflow:hidden;box-shadow:0 6px 24px rgba(2,6,23,.6)}
+    iframe{width:100%;height:360px;border:0;display:block;background:#000}
+    .progress-wrap{width:90%;max-width:760px;margin:18px auto;background:#0f1724;border-radius:14px;padding:8px;box-shadow:inset 0 0 18px rgba(0,0,0,.5)}
+    .bar{height:18px;background:linear-gradient(90deg,#06b6d4,#3b82f6);width:0;border-radius:10px;transition:width .3s linear}
+    .timer{margin-top:12px;font-weight:600;color:#fde68a}
+    .note{margin-top:10px;color:#9ca3af;font-size:14px}
+    .done{margin-top:18px;color:#4ade80;font-weight:700;display:none}
+    .error{margin-top:12px;color:#f87171;font-weight:600}
+    #overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,18,32,.95);display:flex;justify-content:center;align-items:center;color:#34d399;font-size:22px;font-weight:600;z-index:9999}
+  </style>
+
+  <!-- Monetag SDK: keep exactly as provided by Monetag -->
+  <script src='//libtl.com/sdk.js' data-zone='10143448' data-sdk='show_10143448'></script>
+</head>
+<body>
+  <div id="overlay">Loading ad, please wait...</div>
+
+  <h1>🎬 Ad Dekho — Earn ₹3</h1>
+  <p class="desc">Ad poora <b>30 seconds</b> tak dekhna hoga. Tab close karne par hi reward milega.</p>
+
+  <div class="iframe-wrap"><iframe id="adFrame" src="" allow="autoplay; encrypted-media; fullscreen"></iframe></div>
+
+  <div class="progress-wrap"><div id="progress" class="bar"></div></div>
+
+  <div id="timer" class="timer">⏳ Time left: 30s</div>
+  <div id="note" class="note">Please don’t close the tab until the ad finishes.</div>
+  <div id="done" class="done">✅ Reward credited! Aap tab close kar sakte hain.</div>
+  <div id="errorMsg" class="error" style="display:none"></div>
+
+<script>
+(function(){
+  // -------------------------
+  // Config — change only if needed
+  // -------------------------
+  const AD_SECONDS = 30;                 // seconds required
+  const MONETAG_FN = "show_10143448";    // Monetag function (from data-sdk)
+  // adSources: type = 'monetag' or 'iframe'. For 'monetag', ensure MONETAG_FN exists.
+  const adSources = [
+    { type: "iframe", url: "https://defencelaptop.com/w5jv7z978?key=6b56aa0abe5ac7dd06f7c5f7ee09d057" },
+    { type: "iframe", url: "https://defencelaptop.com/a4yw56yc?key=eaa076b4810b01f5539651721b49c032" },
+    { type: "iframe", url: "https://defencelaptop.com/nx6and39v6?key=0617092b8ea2446e5774f5bdf83b0c7d" },
+    { type: "monetag", id: MONETAG_FN }, // Monetag entry (popup)
+    { type: "monetag", id: MONETAG_FN }  // you can repeat monetag (keeps probability balanced)
+  ];
+  // -------------------------
+  // Elements & params
+  // -------------------------
+  const overlay = document.getElementById("overlay");
+  const adFrame = document.getElementById("adFrame");
+  const progressBar = document.getElementById("progress");
+  const timerEl = document.getElementById("timer");
+  const doneEl = document.getElementById("done");
+  const noteEl = document.getElementById("note");
+  const errEl = document.getElementById("errorMsg");
+
+  // parse user id from querystring (provided by bot: /ad?user=12345)
+  const user = new URLSearchParams(window.location.search).get("user");
+  if(!user){
+    timerEl.textContent = "⚠️ Invalid request (missing user).";
+    progressBar.style.width = "100%";
+    overlay.style.display = "none";
+    return;
+  }
+
+  // pick one ad source randomly (balanced)
+  const chosen = adSources[Math.floor(Math.random() * adSources.length)];
+  // fallback iframe URL (always set to one of the iframe links so page isn't blank)
+  const fallbackIframe = adSources.find(s=>s.type==="iframe")?.url || "";
+
+  // set iframe to a random iframe (fallback UI)
+  adFrame.src = fallbackIframe;
+
+  // state flags
+  let timerFinished = false;
+  let userReturned = false;     // indicates user came back from popup/other tab
+  let rewardGiven = false;
+  let adShown = false;
+
+  // helper: safe call function name (for monetag popup)
+  function callNamedFn(fnName){
+    try{
+      const fn = window[fnName];
+      if(typeof fn === "function"){ fn(); return true; }
+    } catch(e){
+      console.warn("callNamedFn error:", e);
+    }
+    return false;
+  }
+
+  // show overlay until ad starts (hidden after ad starts or after 5s)
+  function hideOverlay(){ if(overlay) overlay.style.display = "none"; }
+
+  // Monetag loader: try to invoke Monetag function up to timeout
+  function tryShowMonetag(maxWaitMs=5000, intervalMs=150){
+    const start = Date.now();
+    (function check(){
+      if(typeof window[MONETAG_FN] === "function"){
+        // call it once
+        try{
+          window[MONETAG_FN]();
+          adShown = true;
+          console.log("Monetag function called");
+        }catch(e){
+          console.warn("Monetag call threw:", e);
+        } finally {
+          hideOverlay();
+        }
+        return;
+      }
+      if(Date.now() - start < maxWaitMs){
+        setTimeout(check, intervalMs);
+      } else {
+        console.log("Monetag not available, fallback only");
+        hideOverlay();
+      }
+    })();
+  }
+
+  // If chosen ad is monetag, call monetag; else show iframe (iframe already set)
+  if(chosen.type === "monetag"){
+    // try to show monetag (popup). If not available, overlay auto-hides after timeout.
+    tryShowMonetag();
+  } else {
+    // iframe ad chosen: it's already set; hide overlay quickly
+    hideOverlay();
+    adShown = true;
+  }
+
+  // Guarantee overlay disappears after 5s even if SDK delayed
+  setTimeout(hideOverlay, 5000);
+
+  // ----- detection: user left page (blur) and returned (focus)
+  // We treat focus as user returned from popup or other tab/window.
+  window.addEventListener("blur", ()=> {
+    // user likely opened popup or switched tab to watch ad
+    console.log("blur: user likely watching ad");
+  });
+  window.addEventListener("focus", ()=> {
+    console.log("focus: user returned");
+    userReturned = true;
+    maybeGiveReward();
+  });
+
+  // ----- timer logic
+  const total = AD_SECONDS;
+  let remaining = total;
+  const tick = setInterval(()=>{
+    remaining--;
+    const percent = Math.round(((total - remaining) / total) * 100);
+    progressBar.style.width = percent + "%";
+    timerEl.textContent = "⏳ Time left: " + remaining + "s";
+    if(remaining <= 0){
+      clearInterval(tick);
+      timerFinished = true;
+      maybeGiveReward();
+    }
+  }, 1000);
+
+  // ----- reward logic: require both timerFinished AND userReturned
+  function maybeGiveReward(){
+    if(rewardGiven) return; // already done
+    // If ad is iframe-only (no popup), userReturned might not toggle; treat iframe as "returned"
+    const iframeUsed = (chosen.type === "iframe");
+    const condition = timerFinished && (userReturned || iframeUsed);
+    if(condition){
+      rewardGiven = true;
+      progressBar.style.width = "100%";
+      timerEl.style.display = "none";
+      doneEl.style.display = "block";
+      noteEl.style.display = "none";
+      // call your existing server reward route
+      fetch(`/reward?user=${encodeURIComponent(user)}`, { method: "GET" })
+        .then(resp => {
+          console.log("Reward response:", resp.status);
+          if(!resp.ok){
+            if(resp.status === 429) errEl.textContent = "🚫 Reward not credited: daily limit or too soon.";
+            else errEl.textContent = "⚠️ Server error while crediting reward.";
+            errEl.style.display = "block";
+          }
+        })
+        .catch(err => {
+          console.error("Reward network error:", err);
+          errEl.textContent = "⚠️ Network error while crediting reward.";
+          errEl.style.display = "block";
+        });
+    } else {
+      // Not yet eligible; show hint after timer finishes if user hasn't returned
+      if(timerFinished && !userReturned && !iframeUsed){
+        // show small hint to user to return (this is optional UX)
+        errEl.textContent = "🔔 Ad finished — please return to this tab to get your reward.";
+        errEl.style.display = "block";
+      }
+    }
+  }
+
+  // small safety: prevent accidental double-calls if page is re-focused multiple times
+  window.addEventListener("visibilitychange", ()=>{
+    if(document.visibilityState === "visible"){ userReturned = true; maybeGiveReward(); }
+  });
+
+  // small protect: once reward given, don't run again even if focus toggles
+})();
+</script>
+</body>
+</html>
